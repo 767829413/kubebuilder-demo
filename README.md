@@ -1,10 +1,10 @@
 # kubebuilder-demo
 
-// TODO(user): Add simple overview of use/purpose
+In-depth understanding of declarative API - Practicing custom controllers
 
 ## Description
 
-// TODO(user): An in-depth paragraph about your project and overview of use
+Quickly practice CRD with custom controllers using kuberbuilder
 
 ## Getting Started
 
