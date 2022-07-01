@@ -1,0 +1,16 @@
+domain: demo.kubebuilder.io
+layout:
+- go.kubebuilder.io/v3
+projectName: kubebuilder-demo
+repo: github.com/767829413/kubebuilder-demo
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: demo.kubebuilder.io
+  group: myapp
+  kind: Redis
+  path: github.com/767829413/kubebuilder-demo/api/v1
+  version: v1
+version: "3"
