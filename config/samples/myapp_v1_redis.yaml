@@ -4,4 +4,4 @@ metadata:
   name: redis-sample
 spec:
   port: 6379
-  num: 3
+  num: 4

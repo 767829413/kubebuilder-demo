@@ -20,13 +20,19 @@ import (
 	"context"
 	"fmt"
 
-	myappv1 "github.com/767829413/kubebuilder-demo/api/v1"
+	v1 "github.com/767829413/kubebuilder-demo/api/v1"
 	coreV1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 )
 
 // RedisReconciler reconciles a Redis object
@@ -49,41 +55,46 @@ type RedisReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.1/pkg/reconcile
 func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	if req.Name != "redis-sample" {
+		return ctrl.Result{}, nil
+	}
 	_ = log.FromContext(ctx)
-
-	// TODO(user): your logic here
-	redis := &myappv1.Redis{}
+	redis := &v1.Redis{}
 	// 获取自定义的Redis资源
 	err := r.Get(ctx, req.NamespacedName, redis)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	fmt.Println("redis obj:", redis)
 	// 获取自定义redis资源需要创建的pod名称
 	podNames := GetRedisPodNames(redis)
-	fmt.Println("Pod names:", podNames)
 	// 设置一个是否更新的判断
 	upFlag := false
 
 	// 删除自定义Redis资源的过程中,需要判断DeletionTimestamp(自动添加)
 	// 如果有值表示删除,无值表示未删除
-	if !redis.DeletionTimestamp.IsZero() {
+	// 如果缩容时候需要删除相应pod数目
+	// len(redis.Finalizers) > redis.Spec.Num 考虑刚开始创建时候 len(redis.Finalizers)必定为0
+	// 后续循环的时候,只要没有扩容或者缩容,必定 len(redis.Finalizers) == redis.Spec.Num
+	if !redis.DeletionTimestamp.IsZero() || len(redis.Finalizers) > redis.Spec.Num {
 		return ctrl.Result{}, r.clearRedis(ctx, redis)
 	}
-
+	// 防止重复pod进入Finalizers
+	m := GetUniqueFinalizersMap(redis.Finalizers)
 	// 创建自定义资源对应的pod
 	for _, podName := range podNames {
-		if IsExist(podName, redis) {
+		if IsExist(podName, redis, r.Client) {
 			continue
 		}
-		err := CreateRedis(podName, r.Client, redis)
+		err := CreateRedis(podName, r.Client, redis, r.Scheme)
 		if err != nil {
 			fmt.Println("create pod failue,", err)
 			return ctrl.Result{}, err
 		}
 		// 如果创建的pod不在finalizers中，则添加
-		redis.Finalizers = append(redis.Finalizers, podName)
-		upFlag = true
+		if _, ok := m[podName]; !ok {
+			redis.Finalizers = append(redis.Finalizers, podName)
+			upFlag = true
+		}
 	}
 
 	// 更细自定义资源 Redis 状态
@@ -95,8 +106,26 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 }
 
 // 删除自定义Redis资源和其创建的Pod逻辑
-func (r *RedisReconciler) clearRedis(ctx context.Context, redis *myappv1.Redis) error {
-	for _, finalizer := range redis.Finalizers {
+func (r *RedisReconciler) clearRedis(ctx context.Context, redis *v1.Redis) error {
+	// 副本数与当前Pod数量的差值就是需要删除的数量
+	// 如果相等,删除全部
+	// 1. len(redis.Finalizers) > redis.Spec.Num 删除差值数量Pod
+	// 2. len(redis.Finalizers) == redis.Spec.Num 删除全部数量Pod
+	// 3. len(redis.Finalizers) < redis.Spec.Num 错误的数量,不建议操作
+	// 删除后项
+	var deletedPodNames []string
+	diffNum := len(redis.Finalizers) - redis.Spec.Num
+	if diffNum == 0 {
+		deletedPodNames = make([]string, len(redis.Finalizers))
+		copy(deletedPodNames, redis.Finalizers)
+		// 只有设置 Finalizers 为空才能真正删除自定义资源Redis
+		redis.Finalizers = []string{}
+	} else if diffNum > 0 {
+		deletedPodNames = redis.Finalizers[redis.Spec.Num:]
+		redis.Finalizers = redis.Finalizers[:redis.Spec.Num]
+	}
+
+	for _, finalizer := range deletedPodNames {
 		// 通过finalizer来批量删除自定义Redis资源创建的Pod
 		err := r.Client.Delete(ctx, &coreV1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
@@ -104,18 +133,38 @@ func (r *RedisReconciler) clearRedis(ctx context.Context, redis *myappv1.Redis) 
 				Namespace: redis.Namespace,
 			},
 		})
+		err = client.IgnoreNotFound(err)
 		if err != nil {
 			return err
 		}
 	}
-	// 只有设置 Finalizers 为空才能真正删除自定义资源Redis
-	redis.Finalizers = []string{}
 	return r.Client.Update(ctx, redis)
+}
+
+// Pod删除时的回调
+func (r *RedisReconciler) podDelHandler(event event.DeleteEvent, limitingInterface workqueue.RateLimitingInterface) {
+	fmt.Println("deleted pod name is :", event.Object.GetName())
+	// 取得OwnerReference,如果自定义资源Kind和Name匹配,则触发reconcile.Request，并加入到等待队列
+	for _, ownerReference := range event.Object.GetOwnerReferences() {
+		if ownerReference.Kind == "Redis" && ownerReference.Name == "redis-sample" {
+			limitingInterface.Add(reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: event.Object.GetNamespace(),
+					Name:      ownerReference.Name,
+				},
+			})
+		}
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RedisReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&myappv1.Redis{}).
+		For(&v1.Redis{}).
+		Watches(&source.Kind{
+			Type: &coreV1.Pod{},
+		}, handler.Funcs{
+			DeleteFunc: r.podDelHandler,
+		}).
 		Complete(r)
 }
