@@ -28,6 +28,8 @@ type RedisSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
+	// Foo string `json:"foo,omitempty"`
+
 	// +kubebuilder:validation:Maximum:=6380
 	// +kubebuilder:validation:Minimum:=6370
 	Port int `json:"port,omitempty"`

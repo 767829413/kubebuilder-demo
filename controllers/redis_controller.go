@@ -81,10 +81,10 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	m := GetUniqueFinalizersMap(redis.Finalizers)
 	// 创建自定义资源对应的pod
 	for _, podName := range podNames {
-		if IsExist(podName, redis, r.Client) {
+		if IsRedisPodExist(podName, redis, r.Client) {
 			continue
 		}
-		err := CreateRedis(podName, r.Client, redis, r.Scheme)
+		err := CreateRedisPod(podName, r.Client, redis, r.Scheme)
 		if err != nil {
 			fmt.Println("create pod failue,", err)
 			return ctrl.Result{}, err

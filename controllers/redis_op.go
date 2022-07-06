@@ -23,7 +23,7 @@ func GetUniqueFinalizersMap(finalizers []string) map[string]int {
 }
 
 // 通过实际请求状态来判断Pod是否存在
-func IsExist(podName string, redis *v1.Redis, client client.Client) bool {
+func IsRedisPodExist(podName string, redis *v1.Redis, client client.Client) bool {
 	err := client.Get(context.Background(), types.NamespacedName{
 		Name:      podName,
 		Namespace: redis.Namespace,
@@ -32,7 +32,7 @@ func IsExist(podName string, redis *v1.Redis, client client.Client) bool {
 }
 
 // 创建redis Pod
-func CreateRedis(podName string, client client.Client, redisConfig *v1.Redis, scheme *runtime.Scheme) error {
+func CreateRedisPod(podName string, client client.Client, redisConfig *v1.Redis, scheme *runtime.Scheme) error {
 	newPod := &coreV1.Pod{}
 	newPod.Name = podName
 	newPod.Namespace = redisConfig.Namespace
