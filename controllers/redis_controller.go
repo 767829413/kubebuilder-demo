@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,7 +39,8 @@ import (
 // RedisReconciler reconciles a Redis object
 type RedisReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme        *runtime.Scheme
+	EventRecorder record.EventRecorder // 增加事件记录
 }
 
 //+kubebuilder:rbac:groups=myapp.demo.kubebuilder.io,resources=redis,verbs=get;list;watch;create;update;patch;delete
@@ -55,15 +57,12 @@ type RedisReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.12.1/pkg/reconcile
 func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	if req.Name != "redis-sample" {
-		return ctrl.Result{}, nil
-	}
 	_ = log.FromContext(ctx)
 	redis := &v1.Redis{}
 	// 获取自定义的Redis资源
 	err := r.Get(ctx, req.NamespacedName, redis)
 	if err != nil {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	// 获取自定义redis资源需要创建的pod名称
 	podNames := GetRedisPodNames(redis)
@@ -99,7 +98,17 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// 更细自定义资源 Redis 状态
 	if upFlag {
-		r.Client.Update(ctx, redis)
+		r.EventRecorder.Event(redis, coreV1.EventTypeNormal, "Upgrade", "Capacity expansion and reduction")
+		//更新status状态值
+		redis.Status.Replicas = len(redis.Finalizers)
+		err := r.Status().Update(ctx, redis)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		err = r.Client.Update(ctx, redis)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -138,7 +147,12 @@ func (r *RedisReconciler) clearRedis(ctx context.Context, redis *v1.Redis) error
 			return err
 		}
 	}
-	return r.Client.Update(ctx, redis)
+	err := r.Client.Update(ctx, redis)
+	if err != nil {
+		return err
+	}
+	err = r.Status().Update(ctx, redis)
+	return err
 }
 
 // Pod删除时的回调

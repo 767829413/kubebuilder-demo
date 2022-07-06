@@ -90,8 +90,9 @@ func main() {
 	}
 
 	if err = (&controllers.RedisReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		EventRecorder: mgr.GetEventRecorderFor("myapp.demo.kubebuilder.io/v1"), // 创建RedisReconciler时，为EventRecorder属性赋值
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Redis")
 		os.Exit(1)

@@ -39,10 +39,13 @@ type RedisSpec struct {
 type RedisStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Replicas int `json:"replicas,omitempty"` //添加副本显示
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
+//+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+//+kubebuilder:printcolumn:JSONPath=".status.replicas",name=Replicas,type=integer
 
 // Redis is the Schema for the redis API
 type Redis struct {
